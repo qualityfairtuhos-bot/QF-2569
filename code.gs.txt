@@ -12,8 +12,8 @@ const APP = Object.freeze({
   LOCALE: 'th_TH',
   DEFAULT_CONFERENCE_ID: 'CONF-TUH-QF-2569',
   PRESENTATION_DEADLINE: '2027-02-28T23:59:59',
-  SPREADSHEET_ID: '', // เว้นว่างเมื่อเป็นสคริปต์ผูกกับ Google Sheet
-  ROOT_FOLDER_ID: '',
+  SPREADSHEET_ID: '1S-ycr1Gyam5Sgbbg0TG1eHJ1oAZ3y2Qwy7WoPxnPPcg', // เว้นว่างเมื่อเป็นสคริปต์ผูกกับ Google Sheet
+  ROOT_FOLDER_ID: '10Ri9qA4__I5k76RBZqxwSUj_huD7Gp0C',
   DEFAULT_LOGO_URL: 'https://img2.pic.in.th/logo-020c27d3e8c360c016.png',
   MAX_UPLOAD_MB: 25,
   SESSION_HOURS: 12,
