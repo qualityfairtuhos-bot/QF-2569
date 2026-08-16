@@ -1534,7 +1534,7 @@ function adminAssignReviewers(token,conferenceId,workId,reviewRoundId,reviewerId
 }
 function sendReviewAssignmentEmail_(cid,w,rev,assignmentId){const portal=buildWebAppRouteUrl_('reviewer',cid);sendEmailLogged_(cid,rev.Email,'แจ้งมอบหมายประเมินผลงาน '+w.WorkCode,'<p>เรียน '+rev.FullName+'</p><p>ท่านได้รับมอบหมายให้ประเมินผลงาน <b>'+w.WorkCode+'</b></p><p><a href="'+portal+'">เข้าสู่ระบบ Reviewer</a></p>','ASSIGNMENT',assignmentId,null);}
 function reviewerBootstrap(token,conferenceId){return runSafely_('reviewerBootstrap',function(){const ctx=requireSession_(token,['REVIEWER'],conferenceId),role=findOne_('UserConferenceRoles',{ConferenceID:conferenceId,UserID:ctx.user.UserID,Role:'REVIEWER'}),perm=jsonParse_(role&&role.PermissionsJson,'{}'),reviewerId=perm.ReviewerID;const reviewer=findOne_('Reviewers',{ReviewerID:reviewerId});if(!reviewer)throw new Error('ไม่พบข้อมูล Reviewer');const assignments=findMany_('ReviewAssignments',{ConferenceID:conferenceId,ReviewerID:reviewerId}).filter(function(x){return upper_(x.Status)!=='CANCELLED';});const works=findMany_('Works',{ConferenceID:conferenceId});const workMap={};works.forEach(function(w){workMap[w.WorkID]=w;});assignments.forEach(function(a){const w=workMap[a.WorkID];if(w){a.TitleTH=w.TitleTH||w.TitleEN||w.ThaiTitle||w.EnglishTitle;a.WorkStatus=w.Status;a.WorkCode=a.WorkCode||w.WorkCode||w.WorkID;}a.AssignedAt=a.AssignedAt||a.CreatedAt||'';});return {reviewer:serialize_(reviewer),assignments:serialize_(assignments),conference:serialize_(findOne_('Conferences',{ConferenceID:conferenceId}))};});}
-function reviewerGetAssignment(token,conferenceId,assignmentId){return runSafely_('reviewerGetAssignment',function(){const ctx=requireSession_(token,['REVIEWER'],conferenceId),role=findOne_('UserConferenceRoles',{ConferenceID:conferenceId,UserID:ctx.user.UserID,Role:'REVIEWER'}),rid=jsonParse_(role.PermissionsJson,{}).ReviewerID,a=findOne_('ReviewAssignments',{ConferenceID:conferenceId,AssignmentID:assignmentId,ReviewerID:rid});if(!a)throw new Error('ไม่มีสิทธิ์เปิดงานนี้');const work=findOne_('Works',{ConferenceID:conferenceId,WorkID:a.WorkID}),round=findOne_('ReviewRounds',{ConferenceID:conferenceId,ReviewRoundID:a.ReviewRoundID});if(!round)throw new Error('ไม่พบรอบประเมิน');if(round.StartAt&&new Date(round.StartAt).getTime()>Date.now())throw new Error('ยังไม่ถึงวันเปิดรอบประเมิน');if(round.EndAt&&new Date(round.EndAt).getTime()<Date.now())throw new Error('หมดเวลาประเมินแล้ว');let files=findMany_('WorkFiles',{ConferenceID:conferenceId,WorkID:a.WorkID}).filter(function(f){return (bool_(f.Active)&&['ORIGINAL'].indexOf(f.FileCategory)>=0)||f.FileCategory==='BLIND';});if(bool_(round.BlindReview)){files=files.filter(function(f){return f.FileCategory==='BLIND';});if(!files.length)throw new Error('ยังไม่มีไฟล์ปกปิดชื่อสำหรับ Blind Review');}const criteria=findMany_('ScoringCriteria',{ConferenceID:conferenceId,ReviewRoundID:a.ReviewRoundID}).filter(function(c){return bool_(c.Active);}),scores=findMany_('ReviewScores',{ConferenceID:conferenceId,AssignmentID:assignmentId});if(!a.OpenedAt)updateRecord_('ReviewAssignments',a.__row,{OpenedAt:new Date(),Status:'OPENED'});return {assignment:serialize_(a),work:serialize_(work),files:serialize_(files),criteria:serialize_(criteria),scores:serialize_(scores)};});}
+function reviewerGetAssignment(token,conferenceId,assignmentId){return runSafely_('reviewerGetAssignment',function(){const ctx=requireSession_(token,['REVIEWER'],conferenceId),role=findOne_('UserConferenceRoles',{ConferenceID:conferenceId,UserID:ctx.user.UserID,Role:'REVIEWER'}),rid=jsonParse_(role.PermissionsJson,{}).ReviewerID,a=findOne_('ReviewAssignments',{ConferenceID:conferenceId,AssignmentID:assignmentId,ReviewerID:rid});if(!a)throw new Error('ไม่มีสิทธิ์เปิดงานนี้');const work=findOne_('Works',{ConferenceID:conferenceId,WorkID:a.WorkID}),round=findOne_('ReviewRounds',{ConferenceID:conferenceId,ReviewRoundID:a.ReviewRoundID});if(!round)throw new Error('ไม่พบรอบประเมิน');if(round.StartAt&&new Date(round.StartAt).getTime()>Date.now())throw new Error('ยังไม่ถึงวันเปิดรอบประเมิน');if(round.EndAt&&new Date(round.EndAt).getTime()<Date.now())throw new Error('หมดเวลาประเมินแล้ว');const allWorkFiles=findMany_('WorkFiles',{ConferenceID:conferenceId,WorkID:a.WorkID}).filter(function(f){return bool_(f.Active);});const blindFiles=allWorkFiles.filter(function(f){return f.FileCategory==='BLIND';});let files=[];if(bool_(round.BlindReview)||blindFiles.length>0){files=blindFiles.length>0?blindFiles:allWorkFiles.filter(function(f){return ['ORIGINAL','WORD','FINAL_PRESENTATION','REVISION'].indexOf(f.FileCategory)>=0;});}else{files=allWorkFiles.filter(function(f){return ['BLIND','ORIGINAL','WORD','FINAL_PRESENTATION','REVISION'].indexOf(f.FileCategory)>=0;});}const criteria=findMany_('ScoringCriteria',{ConferenceID:conferenceId,ReviewRoundID:a.ReviewRoundID}).filter(function(c){return bool_(c.Active);}),scores=findMany_('ReviewScores',{ConferenceID:conferenceId,AssignmentID:assignmentId});if(!a.OpenedAt)updateRecord_('ReviewAssignments',a.__row,{OpenedAt:new Date(),Status:'OPENED'});return {assignment:serialize_(a),work:serialize_(work),files:serialize_(files),criteria:serialize_(criteria),scores:serialize_(scores)};});}
 function reviewerSaveReview(token,conferenceId,assignmentId,payload,submit){return runSafely_('reviewerSaveReview',function(){const ctx=requireSession_(token,['REVIEWER'],conferenceId),role=findOne_('UserConferenceRoles',{ConferenceID:conferenceId,UserID:ctx.user.UserID,Role:'REVIEWER'}),rid=jsonParse_(role.PermissionsJson,{}).ReviewerID,a=findOne_('ReviewAssignments',{ConferenceID:conferenceId,AssignmentID:assignmentId,ReviewerID:rid});if(!a)throw new Error('ไม่มีสิทธิ์');const round=findOne_('ReviewRounds',{ConferenceID:conferenceId,ReviewRoundID:a.ReviewRoundID});if(!round||['CLOSED','LOCKED','CANCELLED'].indexOf(upper_(round.Status))>=0)throw new Error('รอบประเมินปิดแล้ว');if(round.StartAt&&new Date(round.StartAt).getTime()>Date.now())throw new Error('ยังไม่ถึงวันเปิดรอบประเมิน');if(round.EndAt&&new Date(round.EndAt).getTime()<Date.now())throw new Error('หมดเวลาประเมินแล้ว');if(bool_(a.Locked))throw new Error('แบบประเมินถูกล็อก');const scores=payload.Scores||[],criteria={};findMany_('ScoringCriteria',{ConferenceID:conferenceId,ReviewRoundID:a.ReviewRoundID}).forEach(function(c){criteria[c.CriteriaID]=c;});let total=0;scores.forEach(function(s){const c=criteria[s.CriteriaID];if(!c)throw new Error('เกณฑ์คะแนนไม่ถูกต้อง');const score=num_(s.Score);if(score<0||score>num_(c.MaxScore))throw new Error('คะแนนเกินเกณฑ์ '+c.CriteriaNameTH);let old=findOne_('ReviewScores',{ConferenceID:conferenceId,AssignmentID:assignmentId,CriteriaID:s.CriteriaID});const patch={Score:score,WeightedScore:score*(num_(c.WeightPercent,100)/100),Comment:clean_(s.Comment),UpdatedAt:new Date()};if(old)updateRecord_('ReviewScores',old.__row,patch);else appendRecord_('ReviewScores',Object.assign({ScoreID:nextId_('SCORE'),ConferenceID:conferenceId,AssignmentID:assignmentId,ReviewRoundID:a.ReviewRoundID,WorkID:a.WorkID,ReviewerID:rid,CriteriaID:s.CriteriaID,CreatedAt:new Date()},patch));total+=score;});const status=submit?'COMPLETE':'DRAFT_SAVED';updateRecord_('ReviewAssignments',a.__row,{Status:status,CompletedAt:submit?new Date():'',TotalScore:total,Decision:clean_(payload.Decision),RecommendationToAuthor:clean_(payload.RecommendationToAuthor),InternalComment:clean_(payload.InternalComment),Locked:submit&&!bool_(getSetting_(conferenceId,'REVIEWER_CAN_EDIT_AFTER_SUBMIT','FALSE')),UpdatedAt:new Date()});if(submit)appendRecord_('ReviewSummary',{SummaryID:nextId_('SUM'),ConferenceID:conferenceId,AssignmentID:assignmentId,ReviewRoundID:a.ReviewRoundID,WorkID:a.WorkID,ReviewerID:rid,TotalScore:total,Decision:clean_(payload.Decision),RecommendationToAuthor:clean_(payload.RecommendationToAuthor),InternalComment:clean_(payload.InternalComment),CreatedAt:new Date(),UpdatedAt:new Date()});return {status:status,totalScore:total};});}
 
 function ensureMealEntitlements_(conferenceId,regId){
@@ -2342,50 +2342,116 @@ function adminSearchDriveFiles(token, conferenceId, query) {
   });
 }
 
+function extractDriveId_(str) {
+  if (!str) return '';
+  str = String(str).trim();
+  const match = str.match(/[-\w]{25,}/);
+  return match ? match[0] : str;
+}
+
+function adminDeleteWorkFile(token, conferenceId, workFileId) {
+  return runSafely_('adminDeleteWorkFile', function() {
+    const ctx = requireSession_(token, ['SUPERADMIN', 'CONFERENCE_ADMIN', 'ACADEMIC_STAFF'], conferenceId);
+    const file = findOne_('WorkFiles', { ConferenceID: conferenceId, WorkFileID: workFileId });
+    if (!file) throw new Error('ไม่พบไฟล์ที่ต้องการลบ');
+    updateRecord_('WorkFiles', file.__row, {
+      Active: false,
+      UpdatedAt: new Date(),
+      Note: (file.Note || '') + ' [ลบโดยผู้ดูแลระบบ ' + (ctx.user.Email || ctx.user.UserID) + ' เมื่อ ' + Utilities.formatDate(new Date(), APP.TIMEZONE, 'yyyy-MM-dd HH:mm:ss') + ']'
+    });
+    logAudit_(conferenceId, ctx.user, ctx.role, 'DELETE_WORK_FILE', 'WorkFiles', workFileId, {
+      WorkID: file.WorkID,
+      FileName: file.FileName,
+      FileCategory: file.FileCategory
+    });
+    return { success: true, message: 'ลบไฟล์เรียบร้อยแล้ว' };
+  });
+}
+
 function adminUploadWorkFiles(token, conferenceId, workId, regId, payload) {
   return runSafely_('adminUploadWorkFiles', function(){
     const ctx = requireSession_(token, ['SUPERADMIN','CONFERENCE_ADMIN','ACADEMIC_STAFF'], conferenceId);
     
-    if (!regId) regId = 'UNKNOWN_REG_ID';
-    const folder = ensureRegFolder_(conferenceId, regId, 'Works');
-    let fileUrl = '', fileId = '';
+    if (!regId || regId === 'undefined') regId = 'UNKNOWN_REG_ID';
+    const cat = payload.fileCategory || 'ORIGINAL';
+    const folderType = cat === 'BLIND' ? '05_Work_Blind' :
+                       cat === 'ETHICS' ? '06_Work_Ethics' :
+                       cat === 'REVISION' ? '07_Work_Revisions' :
+                       cat === 'PRESENTER_BIO' ? '08_Presenter_Bio' :
+                       cat === 'FINAL_PRESENTATION' ? '09_Final_Presentation' : '04_Work_Original';
+    const folder = ensureRegFolder_(conferenceId, regId, folderType);
+    let fileUrl = '', fileId = '', fileName = payload.fileName || 'file';
     
     if (payload.method === 'LOCAL') {
-      const blob = Utilities.newBlob(Utilities.base64Decode(payload.base64), payload.mimeType, payload.fileName);
+      const blob = Utilities.newBlob(Utilities.base64Decode(payload.base64), payload.mimeType || 'application/octet-stream', fileName);
       const newFile = folder.createFile(blob);
       fileUrl = newFile.getUrl();
       fileId = newFile.getId();
-    } else if (payload.method === 'DRIVE') {
-      const sourceFile = DriveApp.getFileById(payload.driveFileId);
-      const newFile = sourceFile.makeCopy(payload.fileName, folder);
-      fileUrl = newFile.getUrl();
-      fileId = newFile.getId();
+    } else if (payload.method === 'DRIVE' || payload.method === 'URL') {
+      const srcId = extractDriveId_(payload.driveFileId || payload.url || payload.fileId);
+      if (!srcId) throw new Error('ไม่พบ Google Drive File ID หรือ URL ที่ถูกต้อง');
+      try {
+        const sourceFile = DriveApp.getFileById(srcId);
+        if (!payload.fileName) fileName = sourceFile.getName();
+        const newFile = sourceFile.makeCopy(fileName, folder);
+        fileUrl = newFile.getUrl();
+        fileId = newFile.getId();
+      } catch (err) {
+        try {
+          const sourceFile = DriveApp.getFileById(srcId);
+          const blob = sourceFile.getBlob();
+          const newFile = folder.createFile(blob).setName(fileName);
+          fileUrl = newFile.getUrl();
+          fileId = newFile.getId();
+        } catch (e2) {
+          fileUrl = 'https://drive.google.com/file/d/' + srcId + '/view';
+          fileId = srcId;
+        }
+      }
     } else {
-      throw new Error('Invalid method');
+      throw new Error('Invalid method: ' + payload.method);
     }
     
-    const oldFiles = findMany_('WorkFiles', {ConferenceID: conferenceId, WorkID: workId, FileCategory: payload.fileCategory});
-    oldFiles.forEach(f => {
-      updateRecord_('WorkFiles', f.__row, {Active: false, UpdatedAt: new Date()});
-    });
+    const shouldReplace = payload.replace !== false;
+    const oldFiles = findMany_('WorkFiles', {ConferenceID: conferenceId, WorkID: workId, FileCategory: cat});
+    if (shouldReplace) {
+      oldFiles.forEach(function(f) {
+        if (bool_(f.Active)) {
+          updateRecord_('WorkFiles', f.__row, {Active: false, UpdatedAt: new Date()});
+        }
+      });
+    }
     const versionNo = oldFiles.length + 1;
+    const wfId = nextId_('WF');
     
     appendRecord_('WorkFiles', {
-      FileID: nextId_('WF'),
+      WorkFileID: wfId,
       ConferenceID: conferenceId,
       WorkID: workId,
-      FileCategory: payload.fileCategory,
-      FileName: payload.fileName,
-      FileUrl: fileUrl,
-      Provider: 'DRIVE',
-      ProviderFileID: fileId,
-      Active: true,
+      RegID: regId,
+      AssignmentID: '',
+      FileCategory: cat,
       VersionNo: versionNo,
-      CreatedAt: new Date(),
-      UploadedBy: ctx.user.UserID
+      FileName: fileName,
+      FileId: fileId,
+      FileUrl: fileUrl,
+      MimeType: payload.mimeType || 'application/octet-stream',
+      FileSize: payload.fileSize || 0,
+      UploadedBy: ctx.user.UserID || ctx.user.Email,
+      UploadedAt: new Date(),
+      Active: true,
+      ReplacedFileID: (shouldReplace && oldFiles.length) ? (oldFiles[oldFiles.length - 1].WorkFileID || '') : '',
+      Note: cat === 'BLIND' ? 'Blind Review File attached by Admin' : ''
     });
     
-    return { success: true, url: fileUrl };
+    logAudit_(conferenceId, ctx.user, ctx.role, 'UPLOAD_WORK_FILE', 'WorkFiles', wfId, {
+      WorkID: workId,
+      FileName: fileName,
+      FileCategory: cat,
+      VersionNo: versionNo
+    });
+    
+    return { success: true, url: fileUrl, fileId: fileId, workFileId: wfId };
   });
 }
 
