@@ -325,18 +325,21 @@ async function loadWorks(){
         <button class="btn btn-blue btn-sm" title="คะแนน" onclick="openScoreSummary('${esc(w.WorkID)}')"><i class="fa-solid fa-chart-simple"></i></button>
         <button class="btn btn-gold btn-sm" title="ปรับสถานะ" onclick="openUpdateWorkStatus('${esc(w.WorkID)}', '${esc(w.Status||w.CurrentStatus)}')"><i class="fa-solid fa-pen-to-square"></i></button>
         <button class="btn btn-soft btn-sm" title="ส่งอีเมล" onclick="openEmail('${esc(w.PresenterEmail||'')}','แจ้งผลงาน ${esc(w.WorkCode||'')}','เรียน ${esc(w.PresenterName||'')}', '${esc(w.WorkID)}')"><i class="fa-solid fa-envelope"></i></button>
-        <button class="btn btn-gold btn-sm" title="แนบไฟล์" onclick="openUploadModal('${esc(w.WorkID)}','${esc(w.RegID||'')}')"><i class="fa-solid fa-cloud-arrow-up"></i></button>
-        ${(w.files||[]).sort((a,b)=>{
-          const wa = (a.FileCategory||'').includes('PRESENT') ? 2 : (a.FileCategory==='BLIND' ? 1 : 0);
-          const wb = (b.FileCategory||'').includes('PRESENT') ? 2 : (b.FileCategory==='BLIND' ? 1 : 0);
+        <button class="btn btn-gold btn-sm" title="จัดการไฟล์ผลงาน (ดู/ลบ/แนบไฟล์ Blind)" onclick="openUploadModal('${esc(w.WorkID)}','${esc(w.RegID||'')}')"><i class="fa-solid fa-folder-open"></i></button>
+        ${(w.files||[]).filter(f=>f.Active!==false && f.Active!=='false').sort((a,b)=>{
+          const wa = (a.FileCategory||'').includes('PRESENT') ? 3 : (a.FileCategory==='BLIND' ? 1 : 2);
+          const wb = (b.FileCategory||'').includes('PRESENT') ? 3 : (b.FileCategory==='BLIND' ? 1 : 2);
           return wa - wb;
         }).map(f=>{
-          let t = f.FileCategory, i = 'fa-file-pdf';
-          if(t==='BLIND'){ t='ไฟล์ปกปิดชื่อ (Blind)'; i='fa-user-secret'; }
+          let t = f.FileCategory, i = 'fa-file-pdf', cls = 'btn-soft';
+          if(t==='BLIND'){ t='ไฟล์ปกปิดชื่อ (Blind Review)'; i='fa-user-secret'; cls='btn-gold'; }
           else if(t==='PRESENTER_BIO'){ t='ประวัติผู้นำเสนอ (Bio)'; i='fa-address-card'; }
-          else if((t||'').includes('PRESENT')){ t='ไฟล์นำเสนอ'; i='fa-display'; }
-          else{ t='ไฟล์ต้นฉบับ ('+t+')'; if(t==='WORD') i='fa-file-word'; }
-          return `<a target="_blank" href="${esc(f.FileUrl)}" class="btn btn-soft btn-sm" title="${t}"><i class="fa-solid ${i}"></i></a>`;
+          else if(t==='ETHICS'){ t='เอกสารจริยธรรม (Ethics)'; i='fa-shield-halved'; }
+          else if(t==='REVISION'){ t='ไฟล์ผลงานฉบับแก้ไข (Revision)'; i='fa-file-pen'; }
+          else if((t||'').includes('PRESENT')){ t='ไฟล์นำเสนอ (Presentation)'; i='fa-display'; }
+          else if(t==='WORD'){ t='ไฟล์ผลงาน Word ต้นฉบับ'; i='fa-file-word'; }
+          else{ t='ไฟล์ผลงาน PDF ต้นฉบับ'; }
+          return `<a target="_blank" href="${esc(f.FileUrl)}" class="btn ${cls} btn-sm" title="${t}"><i class="fa-solid ${i}"></i></a>`;
         }).join('')}
       </td>
     </tr>`).join(''):'<tr><td colspan="8" class="muted">ไม่พบข้อมูล</td></tr>';
@@ -592,128 +595,401 @@ async function loadReviewConfig(){const d=await rpc('adminGetReviewConfig',TOKEN
 
 function switchUploadTab(t){
   if(t==='local'){
-    document.getElementById('tbLocal').classList.add('active');
-    document.getElementById('tbDrive').classList.remove('active');
-    document.getElementById('tpLocal').classList.add('active');
-    document.getElementById('tpDrive').classList.remove('active');
+    document.getElementById('tbLocal')?.classList.add('active');
+    document.getElementById('tbDrive')?.classList.remove('active');
+    document.getElementById('tpLocal')?.classList.add('active');
+    document.getElementById('tpDrive')?.classList.remove('active');
   } else {
-    document.getElementById('tbLocal').classList.remove('active');
-    document.getElementById('tbDrive').classList.add('active');
-    document.getElementById('tpLocal').classList.remove('active');
-    document.getElementById('tpDrive').classList.add('active');
+    document.getElementById('tbLocal')?.classList.remove('active');
+    document.getElementById('tbDrive')?.classList.add('active');
+    document.getElementById('tpLocal')?.classList.remove('active');
+    document.getElementById('tpDrive')?.classList.add('active');
   }
 }
 
-async function uploadLocalFile(wid, regId){
-  const file = document.getElementById('localFile').files[0];
-  const type = document.getElementById('localType').value;
-  if(!file) return Swal.fire('กรุณาเลือกไฟล์','','warning');
-  show('กำลังอัปโหลดไฟล์...');
+async function openUploadModal(workId, regId) {
+  window.CurrentUploadWorkId = workId;
+  window.CurrentUploadRegId = regId;
+  const w = (window.WORK_ROWS || []).find(x => x.WorkID === workId) || { WorkID: workId, RegID: regId, files: [] };
+  const files = (w.files || []).filter(f => f.Active !== false && f.Active !== 'false');
+
+  const fileCategoryMeta = {
+    BLIND: { label: '🔒 ไฟล์ปกปิดชื่อ (Blind Review)', color: '#b45309', bg: '#fef3c7', icon: 'fa-user-secret', desc: 'ไฟล์ที่ตัดชื่อผู้แต่งออกแล้ว สำหรับ Reviewer ประเมินผลงาน' },
+    ORIGINAL: { label: '📄 ไฟล์ผลงาน PDF (ฉบับสมบูรณ์)', color: '#0369a1', bg: '#e0f2fe', icon: 'fa-file-pdf', desc: 'ไฟล์ผลงานต้นฉบับรูปแบบ PDF' },
+    WORD: { label: '📝 ไฟล์ Word (ต้นฉบับ)', color: '#1d4ed8', bg: '#dbeafe', icon: 'fa-file-word', desc: 'ไฟล์ผลงานต้นฉบับรูปแบบ DOCX' },
+    FINAL_PRESENTATION: { label: '🖥️ ไฟล์นำเสนอ (Presentation)', color: '#15803d', bg: '#dcfce7', icon: 'fa-display', desc: 'ไฟล์นำเสนอสำหรับรอบ Oral หรือ Poster' },
+    ETHICS: { label: '🛡️ เอกสารจริยธรรมการวิจัย', color: '#475569', bg: '#f1f5f9', icon: 'fa-shield-halved', desc: 'หนังสือรับรองหรือเอกสารจริยธรรม' },
+    PRESENTER_BIO: { label: '👤 ประวัติผู้นำเสนอ (Bio)', color: '#be185d', bg: '#fce7f3', icon: 'fa-address-card', desc: 'ประวัติและข้อมูลผู้นำเสนอผลงาน' },
+    REVISION: { label: '✏️ ไฟล์ผลงานฉบับแก้ไข', color: '#7e22ce', bg: '#f3e8ff', icon: 'fa-file-pen', desc: 'ไฟล์ผลงานที่ปรับปรุงแก้ไขตามข้อเสนอแนะ' }
+  };
+
+  const filesListHtml = files.length ? files.map((f, idx) => {
+    const meta = fileCategoryMeta[f.FileCategory] || { label: f.FileCategory, color: '#334155', bg: '#f1f5f9', icon: 'fa-file', desc: '' };
+    const dateStr = f.UploadedAt || f.CreatedAt ? new Date(f.UploadedAt || f.CreatedAt).toLocaleString('th-TH', {day:'2-digit', month:'short', year:'numeric', hour:'2-digit', minute:'2-digit'}) : '-';
+    return `
+      <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center; gap:12px; box-shadow:0 1px 3px rgba(0,0,0,0.04)">
+        <div style="flex:1; min-width:0;">
+          <div style="display:flex; align-items:center; gap:8px; margin-bottom:4px; flex-wrap:wrap;">
+            <span style="font-size:0.78rem; font-weight:700; background:${meta.bg}; color:${meta.color}; padding:3px 8px; border-radius:6px; display:inline-flex; align-items:center; gap:5px;">
+              <i class="fa-solid ${meta.icon}"></i> ${meta.label}
+            </span>
+            ${f.VersionNo ? `<span style="font-size:0.72rem; color:#64748b; background:#f8fafc; border:1px solid #e2e8f0; padding:2px 6px; border-radius:4px">v${f.VersionNo}</span>` : ''}
+          </div>
+          <div style="font-weight:600; font-size:0.9rem; color:#0f172a; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${esc(f.FileName || 'ไฟล์ผลงาน')}">
+            ${esc(f.FileName || 'ไฟล์ผลงาน')}
+          </div>
+          <div style="font-size:0.75rem; color:#64748b; margin-top:2px;">
+            <span>📅 อัปโหลด: ${esc(dateStr)}</span>
+          </div>
+        </div>
+        <div style="display:flex; gap:6px; flex-shrink:0;">
+          <a href="${esc(f.FileUrl)}" target="_blank" class="btn btn-sm btn-soft" style="display:inline-flex; align-items:center; gap:4px; text-decoration:none;" title="เปิดดูไฟล์">
+            <i class="fa-solid fa-arrow-up-right-from-square"></i> เปิดไฟล์
+          </a>
+          <button class="btn btn-sm" style="background:#fee2e2; color:#dc2626; border:1px solid #fca5a5; display:inline-flex; align-items:center; gap:4px;" onclick="deleteWorkFile('${esc(f.WorkFileID || f.FileID || f.FileId)}', '${esc(workId)}', '${esc(regId)}', '${esc(f.FileName || meta.label)}')" title="ลบไฟล์นี้">
+            <i class="fa-solid fa-trash-can"></i> ลบ
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('') : `
+    <div style="text-align:center; padding:18px; background:#f8fafc; border:1px dashed #cbd5e1; border-radius:10px; color:#64748b; font-size:0.88rem;">
+      <i class="fa-solid fa-folder-open" style="font-size:24px; color:#94a3b8; display:block; margin-bottom:6px;"></i>
+      ยังไม่มีไฟล์แนบในระบบสำหรับผลงานนี้
+    </div>
+  `;
+
+  const h = `
+    <style>
+      .modal-tab-btns{display:flex; border-bottom:2px solid #e2e8f0; margin-bottom:16px; gap:8px}
+      .modal-tab-btns button{flex:1; padding:10px 12px; border:none; background:none; cursor:pointer; font-weight:600; font-size:0.9rem; color:#64748b; border-bottom:3px solid transparent; transition:all 0.2s; border-radius:6px 6px 0 0}
+      .modal-tab-btns button:hover{background:#f8fafc; color:#0f172a}
+      .modal-tab-btns button.active{color:#006D70; border-bottom-color:#006D70; background:#f0fdfa}
+      .modal-tab-pane{display:none; text-align:left}
+      .modal-tab-pane.active{display:block}
+      .drop-zone{border:2px dashed #94a3b8; border-radius:12px; padding:22px; text-align:center; background:#fafafa; transition:all 0.2s; cursor:pointer}
+      .drop-zone:hover{border-color:#006D70; background:#f0fdfa}
+    </style>
+    <div style="text-align:left;">
+      <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+          <span style="font-size:0.8rem; font-weight:700; color:#006D70; background:#e6fffa; padding:2px 8px; border-radius:4px;">
+            # ${esc(w.WorkCode || w.WorkID)}
+          </span>
+          <span style="font-size:0.8rem; color:#64748b;">
+            สถานะ: ${statusBadge(w.Status || w.CurrentStatus)}
+          </span>
+        </div>
+        <div style="font-weight:700; font-size:0.95rem; color:#0f172a; line-height:1.4;">
+          ${esc(w.ThaiTitle || w.EnglishTitle || w.TitleTH || w.TitleEN || 'ไม่มีชื่อเรื่อง')}
+        </div>
+        <div style="font-size:0.8rem; color:#475569; margin-top:4px;">
+          <b>ผู้ส่ง/ผู้นำเสนอ:</b> ${esc(w.PresenterName || ((w.authors||[]).find(a=>a.IsPresenter)?.FullName||'-'))} ${w.PresenterEmail ? `<span class="muted">(${esc(w.PresenterEmail)})</span>` : ''}
+        </div>
+      </div>
+
+      <div style="margin-bottom:18px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <b style="font-size:0.92rem; color:#0f172a;"><i class="fa-solid fa-file-lines" style="color:#006D70"></i> ไฟล์ที่แนบไว้ปัจจุบัน (${files.length} ไฟล์)</b>
+          <span style="font-size:0.75rem; color:#64748b;">(กดปุ่มลบ เพื่อนำไฟล์ออก หรืออัปโหลดใหม่เพื่อแทนที่)</span>
+        </div>
+        <div id="modalFilesList" style="max-height:220px; overflow-y:auto; padding-right:4px;">
+          ${filesListHtml}
+        </div>
+      </div>
+
+      <div style="border-top:1px solid #e2e8f0; padding-top:16px;">
+        <b style="font-size:0.92rem; color:#0f172a; display:block; margin-bottom:10px;">
+          <i class="fa-solid fa-cloud-arrow-up" style="color:#006D70"></i> แนบไฟล์ใหม่ / เพิ่มไฟล์ Blind Review / แทนที่ไฟล์เดิม
+        </b>
+
+        <div class="modal-tab-btns">
+          <button id="tbLocal" class="active" onclick="switchUploadTab('local')">
+            <i class="fa-solid fa-laptop"></i> อัปโหลดจากคอมพิวเตอร์
+          </button>
+          <button id="tbDrive" onclick="switchUploadTab('drive')">
+            <i class="fa-brands fa-google-drive"></i> เลือกจาก Google Drive / ใส่ลิงก์
+          </button>
+        </div>
+
+        <div id="tpLocal" class="modal-tab-pane active">
+          <div style="margin-bottom:10px;">
+            <label style="font-size:0.82rem; font-weight:600; color:#334155; display:block; margin-bottom:4px;">
+              เลือกหมวดหมู่ไฟล์ที่ต้องการแนบ:
+            </label>
+            <select id="localType" class="field" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.88rem;">
+              <option value="BLIND" selected>🔒 ไฟล์ปกปิดชื่อผู้แต่ง (Blind Review - สำหรับ Reviewer ประเมิน)</option>
+              <option value="ORIGINAL">📄 ไฟล์ผลงาน PDF (ฉบับสมบูรณ์)</option>
+              <option value="WORD">📝 ไฟล์ผลงาน Word (ต้นฉบับ)</option>
+              <option value="FINAL_PRESENTATION">🖥️ ไฟล์นำเสนอ (Oral / Poster Presentation)</option>
+              <option value="ETHICS">🛡️ เอกสารรับรองจริยธรรมการวิจัย</option>
+              <option value="PRESENTER_BIO">👤 ประวัติผู้นำเสนอ (Bio)</option>
+              <option value="REVISION">✏️ ไฟล์ผลงานฉบับแก้ไข (Revision)</option>
+            </select>
+          </div>
+
+          <div class="drop-zone" onclick="document.getElementById('localFile').click()">
+            <i class="fa-solid fa-cloud-arrow-up" style="font-size:32px; color:#006D70; margin-bottom:8px"></i>
+            <div style="font-weight:600; font-size:0.9rem; color:#1e293b">คลิกเพื่อเลือกไฟล์ หรือลากไฟล์มาวางที่นี่</div>
+            <div style="font-size:0.75rem; color:#64748b; margin-top:2px;">รองรับ PDF, DOC, DOCX, PPT, PPTX (ขนาดไม่เกิน 50MB)</div>
+            <input type="file" id="localFile" accept=".pdf,.doc,.docx,.ppt,.pptx" style="display:none" onchange="document.getElementById('selectedFileName').innerText = this.files[0] ? ('ไฟล์ที่เลือก: ' + this.files[0].name + ' (' + (this.files[0].size/1024/1024).toFixed(2) + ' MB)') : ''">
+            <div id="selectedFileName" style="font-size:0.82rem; font-weight:bold; color:#006D70; margin-top:6px;"></div>
+          </div>
+
+          <button class="btn btn-primary" style="margin-top:12px; width:100%; padding:10px; font-weight:600; font-size:0.9rem; display:flex; justify-content:center; align-items:center; gap:8px;" onclick="uploadLocalFile('${workId}','${regId}')">
+            <i class="fa-solid fa-upload"></i> บันทึกและแนบไฟล์จากเครื่อง
+          </button>
+        </div>
+
+        <div id="tpDrive" class="modal-tab-pane">
+          <div style="margin-bottom:10px;">
+            <label style="font-size:0.82rem; font-weight:600; color:#334155; display:block; margin-bottom:4px;">
+              เลือกหมวดหมู่ไฟล์ที่ต้องการแนบ:
+            </label>
+            <select id="driveType" class="field" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.88rem;">
+              <option value="BLIND" selected>🔒 ไฟล์ปกปิดชื่อผู้แต่ง (Blind Review - สำหรับ Reviewer ประเมิน)</option>
+              <option value="ORIGINAL">📄 ไฟล์ผลงาน PDF (ฉบับสมบูรณ์)</option>
+              <option value="WORD">📝 ไฟล์ผลงาน Word (ต้นฉบับ)</option>
+              <option value="FINAL_PRESENTATION">🖥️ ไฟล์นำเสนอ (Oral / Poster Presentation)</option>
+              <option value="ETHICS">🛡️ เอกสารรับรองจริยธรรมการวิจัย</option>
+              <option value="PRESENTER_BIO">👤 ประวัติผู้นำเสนอ (Bio)</option>
+              <option value="REVISION">✏️ ไฟล์ผลงานฉบับแก้ไข (Revision)</option>
+            </select>
+          </div>
+
+          <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:12px; margin-bottom:10px;">
+            <label style="font-size:0.82rem; font-weight:600; color:#334155; display:block; margin-bottom:4px;">
+              วิธีที่ 1: ค้นหาไฟล์ใน Google Drive ของงานประชุม
+            </label>
+            <div style="display:flex; gap:8px;">
+              <input id="driveSearch" placeholder="พิมพ์ชื่อผลงาน, รหัสงาน, หรือชื่อผู้แต่ง..." class="field" style="flex:1; padding:8px 10px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.85rem;" value="${esc(w.WorkCode || workId)}">
+              <button class="btn btn-soft" style="padding:8px 14px; font-weight:600; font-size:0.85rem;" onclick="searchDriveFiles()">
+                <i class="fa-solid fa-search"></i> ค้นหา
+              </button>
+            </div>
+            <div id="driveRes" style="max-height:160px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:8px; margin-top:8px; background:#fff;">
+              <div style="padding:12px; text-align:center; font-size:0.8rem; color:#94a3b8;">กดค้นหาเพื่อดูไฟล์ใน Google Drive</div>
+            </div>
+          </div>
+
+          <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:12px;">
+            <label style="font-size:0.82rem; font-weight:600; color:#334155; display:block; margin-bottom:4px;">
+              วิธีที่ 2: วางลิงก์ Google Drive หรือ File ID โดยตรง
+            </label>
+            <input id="directDriveUrl" placeholder="วางลิงก์ Google Drive หรือ File ID ที่นี่..." class="field" style="width:100%; padding:8px 10px; border-radius:8px; border:1px solid #cbd5e1; font-size:0.85rem; margin-bottom:8px;">
+            <button class="btn btn-primary" style="width:100%; padding:9px; font-weight:600; font-size:0.88rem; display:flex; justify-content:center; align-items:center; gap:8px;" onclick="uploadDirectDriveFile('${workId}','${regId}')">
+              <i class="fa-brands fa-google-drive"></i> ดึงและแนบไฟล์จากลิงก์ Drive
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  Swal.fire({
+    title: '📁 จัดการไฟล์ผลงานวิชาการ',
+    html: h,
+    width: 680,
+    showConfirmButton: false,
+    showCloseButton: true,
+    customClass: { popup: 'swal2-custom-modal' }
+  });
+}
+
+async function deleteWorkFile(workFileId, workId, regId, fileName) {
+  if (!workFileId) return;
+  const conf = await Swal.fire({
+    title: 'ยืนยันการลบไฟล์?',
+    html: `ต้องการลบไฟล์ <b>"${esc(fileName || 'ไฟล์ผลงาน')}"</b> ออกจากระบบใช่หรือไม่?<br><span style="font-size:0.82rem; color:#64748b;">(การลบจะปิดสถานะไฟล์เดิมและบันทึกประวัติไว้)</span>`,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'ใช่, ลบไฟล์ออก',
+    cancelButtonText: 'ยกเลิก',
+    confirmButtonColor: '#dc2626',
+    cancelButtonColor: '#64748b'
+  });
+
+  if (!conf.isConfirmed) return;
+
+  show('กำลังลบไฟล์...');
   try {
-    const b64 = await new Promise((res,rej)=>{
+    await rpc('adminDeleteWorkFile', TOKEN, CID, workFileId);
+    hide();
+    Swal.fire({ icon: 'success', title: 'ลบไฟล์เรียบร้อยแล้ว', timer: 1500, showConfirmButton: false });
+    await loadWorks();
+    openUploadModal(workId, regId);
+  } catch (e) {
+    err(e);
+  }
+}
+
+async function uploadLocalFile(wid, regId) {
+  const fileInput = document.getElementById('localFile');
+  const file = fileInput ? fileInput.files[0] : null;
+  const type = document.getElementById('localType') ? document.getElementById('localType').value : 'ORIGINAL';
+  if (!file) return Swal.fire({ icon: 'warning', title: 'กรุณาเลือกไฟล์ที่ต้องการอัปโหลด', text: 'คลิกที่กล่องอัปโหลดเพื่อเลือกไฟล์จากเครื่องของท่าน' });
+
+  const w = (window.WORK_ROWS || []).find(x => x.WorkID === wid);
+  const existingSameType = w && (w.files || []).some(f => (f.Active !== false && f.Active !== 'false') && f.FileCategory === type);
+
+  let replace = true;
+  if (existingSameType) {
+    const ask = await Swal.fire({
+      title: 'พบไฟล์หมวดหมู่นี้อยู่แล้วในระบบ',
+      html: `ผลงานนี้มีไฟล์ประเภท <b>"${esc(type)}"</b> แนบอยู่แล้ว<br>ท่านต้องการ <b>แทนที่ไฟล์เดิม</b> หรือ <b>แนบเพิ่มเป็นไฟล์ใหม่</b>?`,
+      icon: 'question',
+      showCancelButton: true,
+      showDenyButton: true,
+      confirmButtonText: 'แทนที่ไฟล์เดิม',
+      denyButtonText: 'แนบเพิ่ม (เก็บทั้งคู่)',
+      cancelButtonText: 'ยกเลิก',
+      confirmButtonColor: '#006D70',
+      denyButtonColor: '#475569'
+    });
+    if (ask.isDismissed) return;
+    replace = ask.isConfirmed;
+  }
+
+  show('กำลังอัปโหลดและบันทึกไฟล์...');
+  try {
+    const b64 = await new Promise((res, rej) => {
       const r = new FileReader();
-      r.onload = ()=>res(r.result.split(',')[1]);
+      r.onload = () => res(r.result.split(',')[1]);
       r.onerror = rej;
       r.readAsDataURL(file);
     });
+
     await rpc('adminUploadWorkFiles', TOKEN, CID, wid, regId, {
       method: 'LOCAL',
       fileName: file.name,
       mimeType: file.type || 'application/octet-stream',
+      fileSize: file.size || 0,
       base64: b64,
-      fileCategory: type
+      fileCategory: type,
+      replace: replace
     });
-    hide();
-    Swal.fire('อัปโหลดไฟล์สำเร็จ','','success');
-    loadWorks();
-  } catch(e) { err(e); }
-}
 
-async function searchDriveFiles(){
-  const q = document.getElementById('driveSearch').value.trim();
-  const resBox = document.getElementById('driveRes');
-  resBox.innerHTML = '<div style="padding:15px; text-align:center">กำลังค้นหา...</div>';
-  try {
-    const files = await rpc('adminSearchDriveFiles', TOKEN, CID, q);
-    if(!files.length) { resBox.innerHTML = '<div style="padding:15px; text-align:center" class="muted">ไม่พบข้อมูล</div>'; return; }
-    resBox.innerHTML = files.map(f=>
-      `<div style="padding:10px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center">
-        <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-right:10px;">
-          <b style="display:block">${esc(f.name)}</b>
-        </div>
-        <button class="btn btn-sm btn-gold" onclick="selectDriveFile('${esc(window.CurrentUploadWorkId)}','${esc(window.CurrentUploadRegId)}','${esc(f.id)}','${esc(f.name)}')">เลือก</button>
-      </div>`
-    ).join('');
-  } catch(e) {
-    resBox.innerHTML = '<div style="padding:15px; text-align:center; color:red">${esc(e.message)}</div>';
+    hide();
+    await Swal.fire({ icon: 'success', title: 'แนบไฟล์สำเร็จเรียบร้อย', timer: 1500, showConfirmButton: false });
+    await loadWorks();
+    openUploadModal(wid, regId);
+  } catch (e) {
+    err(e);
   }
 }
 
-async function selectDriveFile(wid, regId, fileId, fileName){
-  const type = document.getElementById('driveType').value;
-  show('กำลังคัดลอกไฟล์จาก Drive...');
+async function searchDriveFiles() {
+  const q = (document.getElementById('driveSearch')?.value || '').trim();
+  const resBox = document.getElementById('driveRes');
+  if (!resBox) return;
+  resBox.innerHTML = '<div style="padding:14px; text-align:center; font-size:0.85rem; color:#006D70;"><span class="spin" style="display:inline-block; margin-right:6px"></span> กำลังค้นหาไฟล์ใน Google Drive...</div>';
+  try {
+    const files = await rpc('adminSearchDriveFiles', TOKEN, CID, q);
+    if (!files || !files.length) {
+      resBox.innerHTML = '<div style="padding:14px; text-align:center; font-size:0.85rem; color:#64748b;">ไม่พบไฟล์ที่ตรงกับคำค้นหา</div>';
+      return;
+    }
+    resBox.innerHTML = files.map(f =>
+      `<div style="padding:8px 10px; border-bottom:1px solid #f1f5f9; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <div style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:0.85rem; color:#1e293b;" title="${esc(f.name)}">
+          <i class="fa-solid fa-file" style="color:#006D70; margin-right:5px;"></i> <b>${esc(f.name)}</b>
+        </div>
+        <button class="btn btn-sm btn-gold" style="padding:4px 10px; font-size:0.78rem; flex-shrink:0;" onclick="selectDriveFile('${esc(window.CurrentUploadWorkId)}','${esc(window.CurrentUploadRegId)}','${esc(f.id)}','${esc(f.name)}')">
+          <i class="fa-solid fa-check"></i> เลือกไฟล์นี้
+        </button>
+      </div>`
+    ).join('');
+  } catch (e) {
+    resBox.innerHTML = `<div style="padding:14px; text-align:center; color:#dc2626; font-size:0.85rem;">ค้นหาไม่สำเร็จ: ${esc(e.message)}</div>`;
+  }
+}
+
+async function selectDriveFile(wid, regId, fileId, fileName) {
+  const type = document.getElementById('driveType') ? document.getElementById('driveType').value : 'ORIGINAL';
+  const w = (window.WORK_ROWS || []).find(x => x.WorkID === wid);
+  const existingSameType = w && (w.files || []).some(f => (f.Active !== false && f.Active !== 'false') && f.FileCategory === type);
+
+  let replace = true;
+  if (existingSameType) {
+    const ask = await Swal.fire({
+      title: 'พบไฟล์หมวดหมู่นี้อยู่แล้วในระบบ',
+      html: `ผลงานนี้มีไฟล์ประเภท <b>"${esc(type)}"</b> แนบอยู่แล้ว<br>ท่านต้องการ <b>แทนที่ไฟล์เดิม</b> หรือ <b>แนบเพิ่มเป็นไฟล์ใหม่</b>?`,
+      icon: 'question',
+      showCancelButton: true,
+      showDenyButton: true,
+      confirmButtonText: 'แทนที่ไฟล์เดิม',
+      denyButtonText: 'แนบเพิ่ม (เก็บทั้งคู่)',
+      cancelButtonText: 'ยกเลิก',
+      confirmButtonColor: '#006D70',
+      denyButtonColor: '#475569'
+    });
+    if (ask.isDismissed) return;
+    replace = ask.isConfirmed;
+  }
+
+  show('กำลังคัดลอกและแนบไฟล์จาก Google Drive...');
   try {
     await rpc('adminUploadWorkFiles', TOKEN, CID, wid, regId, {
       method: 'DRIVE',
       driveFileId: fileId,
       fileName: fileName,
-      fileCategory: type
+      fileCategory: type,
+      replace: replace
     });
     hide();
-    Swal.fire('ดึงข้อมูลไฟล์สำเร็จ','','success');
-    loadWorks();
-  } catch(e) { err(e); }
+    await Swal.fire({ icon: 'success', title: 'แนบไฟล์จาก Google Drive สำเร็จ', timer: 1500, showConfirmButton: false });
+    await loadWorks();
+    openUploadModal(wid, regId);
+  } catch (e) {
+    err(e);
+  }
 }
 
-async function promptReplaceWorkFile(workId, regId, existingFilesHtml) {
-  window.CurrentUploadWorkId = workId;
-  window.CurrentUploadRegId = regId;
-  const h = `
-    <style>
-      .tab-btns{display:flex; border-bottom:1px solid #ccc; margin-bottom:15px}
-      .tab-btns button{flex:1; padding:10px; border:none; background:none; cursor:pointer; font-weight:bold; border-bottom:3px solid transparent}
-      .tab-btns button.active{color:#006D70; border-bottom-color:#006D70}
-      .tab-pane{display:none; text-align:left}
-      .tab-pane.active{display:block}
-    </style>
-    ${existingFilesHtml}
-    <div class="tab-btns">
-      <button id="tbLocal" class="active" onclick="switchUploadTab('local')">อัปโหลดจากเครื่อง</button>
-      <button id="tbDrive" onclick="switchUploadTab('drive')">เลือกจาก Google Drive</button>
-    </div>
-    <div id="tpLocal" class="tab-pane active">
-      <div style="padding:20px; text-align:center; border:2px dashed #ccc; border-radius:10px">
-        <i class="fa-solid fa-cloud-arrow-up" style="font-size:40px; color:#006D70; margin-bottom:10px"></i>
-        <h5>อัปโหลดไฟล์</h5>
-        <p class="small muted">รองรับ PDF, DOC, DOCX</p>
-        <input type="file" id="localFile" accept=".pdf,.doc,.docx" class="field" style="width:100%">
-        <select id="localType" class="field" style="margin-top:10px">
-          <option value="PDF">ไฟล์ PDF (ฉบับสมบูรณ์)</option>
-          <option value="WORD">ไฟล์ Word (ต้นฉบับ)</option>
-          <option value="BLIND">ไฟล์ปกปิดชื่อ (Blind Review)</option>
-        </select>
-        <button class="btn btn-primary" style="margin-top:15px; width:100%" onclick="uploadLocalFile('${workId}','${regId}')">เริ่มอัปโหลด</button>
-      </div>
-    </div>
-    <div id="tpDrive" class="tab-pane">
-      <div class="field" style="display:flex; gap:10px">
-        <input id="driveSearch" placeholder="ค้นหาชื่อไฟล์..." style="flex:1" value="${workId}">
-        <button class="btn btn-soft" onclick="searchDriveFiles()"><i class="fa-solid fa-search"></i> ค้นหา</button>
-      </div>
-      <div id="driveRes" style="max-height:200px; overflow-y:auto; border:1px solid #ccc; border-radius:8px; margin-top:10px">
-        <div style="padding:15px; text-align:center" class="muted">พิมพ์ชื่อไฟล์แล้วกดค้นหา</div>
-      </div>
-      <div style="margin-top:10px">
-        <label>ประเภทไฟล์:</label>
-        <select id="driveType" class="field">
-          <option value="PDF">ไฟล์ PDF</option>
-          <option value="WORD">ไฟล์ Word</option>
-          <option value="BLIND">ไฟล์ปกปิดชื่อ (Blind Review)</option>
-        </select>
-      </div>
-    </div>
-  `;
-  Swal.fire({title:'อัปโหลดไฟล์ผลงาน', html:h, width:600, showConfirmButton:false, showCloseButton:true});
+async function uploadDirectDriveFile(wid, regId) {
+  const urlOrId = (document.getElementById('directDriveUrl')?.value || '').trim();
+  const type = document.getElementById('driveType') ? document.getElementById('driveType').value : 'ORIGINAL';
+  if (!urlOrId) return Swal.fire({ icon: 'warning', title: 'กรุณาระบุลิงก์ Google Drive หรือ File ID' });
+
+  const w = (window.WORK_ROWS || []).find(x => x.WorkID === wid);
+  const existingSameType = w && (w.files || []).some(f => (f.Active !== false && f.Active !== 'false') && f.FileCategory === type);
+
+  let replace = true;
+  if (existingSameType) {
+    const ask = await Swal.fire({
+      title: 'พบไฟล์หมวดหมู่นี้อยู่แล้วในระบบ',
+      html: `ผลงานนี้มีไฟล์ประเภท <b>"${esc(type)}"</b> แนบอยู่แล้ว<br>ท่านต้องการ <b>แทนที่ไฟล์เดิม</b> หรือ <b>แนบเพิ่มเป็นไฟล์ใหม่</b>?`,
+      icon: 'question',
+      showCancelButton: true,
+      showDenyButton: true,
+      confirmButtonText: 'แทนที่ไฟล์เดิม',
+      denyButtonText: 'แนบเพิ่ม (เก็บทั้งคู่)',
+      cancelButtonText: 'ยกเลิก',
+      confirmButtonColor: '#006D70',
+      denyButtonColor: '#475569'
+    });
+    if (ask.isDismissed) return;
+    replace = ask.isConfirmed;
+  }
+
+  show('กำลังตรวจสอบและดึงไฟล์จาก Google Drive...');
+  try {
+    await rpc('adminUploadWorkFiles', TOKEN, CID, wid, regId, {
+      method: 'DRIVE',
+      driveFileId: urlOrId,
+      fileCategory: type,
+      replace: replace
+    });
+    hide();
+    await Swal.fire({ icon: 'success', title: 'แนบไฟล์จาก Google Drive สำเร็จ', timer: 1500, showConfirmButton: false });
+    await loadWorks();
+    openUploadModal(wid, regId);
+  } catch (e) {
+    err(e);
+  }
+}
+
+async function promptReplaceWorkFile(workId, regId) {
+  return openUploadModal(workId, regId);
 }
 // Users Management
 async function loadUsers(){
